@@ -18,10 +18,11 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-
+#include "led_driver.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+led_handle_t led1 = { .port = LD2_GPIO_Port, .pin = LD2_Pin }; // LD2 en NUCLEO-L476RG
+led_handle_t led_door = { .port = LED_EXIT_GPIO_Port, .pin = LED_EXIT_Pin };
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -90,13 +91,17 @@ int main(void)
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-
+    led_init(&led1);
+    led_init(&led_door);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+        led_toggle(&led1);
+        led_toggle(&led_door);
+        HAL_Delay(500);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
