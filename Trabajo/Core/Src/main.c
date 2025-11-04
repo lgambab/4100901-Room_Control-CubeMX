@@ -18,15 +18,14 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
 #include "led_driver.h"
 #include "ring_buffer.h"
 #include "keypad_driver.h"
 #include <stdio.h>
 #include <string.h>
-/* Private includes ----------------------------------------------------------*/
-/* USER CODE BEGIN Includes */
-led_handle_t led1 = { .port = LD2_GPIO_Port, .pin = LD2_Pin }; // LD2 en NUCLEO-L476RG
-led_handle_t led_door = { .port = LED_EXIT_GPIO_Port, .pin = LED_EXIT_Pin };
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -48,11 +47,15 @@ led_handle_t led_door = { .port = LED_EXIT_GPIO_Port, .pin = LED_EXIT_Pin };
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
+led_handle_t led1 = { .port = GPIOA, .pin = GPIO_PIN_5 }; // LED onboard NUCLEO-L476RG
+led_handle_t led_ext = { .port = GPIOA, .pin = GPIO_PIN_7 }; // LED externo opcional
+
 #define UART2_RX_LEN 16
 uint8_t uart2_rx_buffer[UART2_RX_LEN];
 ring_buffer_t uart2_rx_rb;
-uint8_t uart2_rx_data; // Variable to hold received data
+uint8_t uart2_rx_data;
 
+// Configuración del teclado matricial
 keypad_handle_t keypad = {
     .row_ports = {KEYPAD_R1_GPIO_Port, KEYPAD_R2_GPIO_Port, KEYPAD_R3_GPIO_Port, KEYPAD_R4_GPIO_Port},
     .row_pins  = {KEYPAD_R1_Pin, KEYPAD_R2_Pin, KEYPAD_R3_Pin, KEYPAD_R4_Pin},
@@ -76,20 +79,24 @@ static void MX_NVIC_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+// Callback de UART
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     if (huart->Instance == USART2) {
-      HAL_UART_Receive_IT(&huart2, &uart2_rx_data, 1);
-      ring_buffer_write(&uart2_rx_rb, uart2_rx_data);
+        HAL_UART_Receive_IT(&huart2, &uart2_rx_data, 1);
+        ring_buffer_write(&uart2_rx_rb, uart2_rx_data);
     }
 }
 
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
+// Callback de interrupción del teclado
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
     char key = keypad_scan(&keypad, GPIO_Pin);
     if (key != '\0') {
         ring_buffer_write(&keypad_rb, (uint8_t)key);
     }
 }
+
 // Redirección de printf al UART
 int _write(int file, char *ptr, int len)
 {
@@ -126,25 +133,55 @@ int main(void)
   char password[5] = "123A";  // Clave válida
   char entered[5] = {0};
   uint8_t index = 0;
+  /* USER CODE END 2 */
+
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
   while (1)
   {
-        led_toggle(&led1);
-        led_toggle(&led_door);
-        HAL_Delay(500);
-        if (ring_buffer_count(&uart2_rx_rb) >= 5) {
-        // If there are at least 5 bytes in the ring buffer, read and process them
-          for (int i = 0; i < 5; i++) {
-            if (ring_buffer_read(&uart2_rx_rb, &uart2_rx_data)) {
-          // Process the received data (for example, print it)
-              HAL_UART_Transmit(&huart2, &uart2_rx_data, 1, HAL_MAX_DELAY);
-        }
-      }
-    }
-    /* USER CODE END WHILE */
+    uint8_t key_from_buffer;
 
-    /* USER CODE BEGIN 3 */
+    // Leer tecla desde buffer circular
+    if (ring_buffer_read(&keypad_rb, &key_from_buffer))
+    {
+        printf("Tecla presionada: %c\r\n", (char)key_from_buffer);
+
+        // Almacenar tecla
+        if (index < 4)
+        {
+            entered[index++] = (char)key_from_buffer;
+        }
+
+        // Cuando se ingresan 4 teclas, validar
+        if (index == 4)
+        {
+            entered[4] = '\0'; // Fin de cadena
+
+            if (strcmp(entered, password) == 0)
+            {
+                printf("✅ Acceso permitido\r\n");
+                led_on(&led_ext);
+                HAL_Delay(1000);
+                led_off(&led_ext);
+            }
+            else
+            {
+                printf("❌ Acceso denegado\r\n");
+                for (int i = 0; i < 3; i++)
+                {
+                    led_toggle(&led_ext);
+                    HAL_Delay(200);
+                }
+                led_off(&led_ext);
+            }
+
+            // Reiniciar para la siguiente entrada
+            index = 0;
+            memset(entered, 0, sizeof(entered));
+        }
+    }
   }
-  /* USER CODE END 3 */
+  /* USER CODE END WHILE */
 }
 
 /**
@@ -156,16 +193,11 @@ void SystemClock_Config(void)
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
-  /** Configure the main internal regulator output voltage
-  */
   if (HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1) != HAL_OK)
   {
     Error_Handler();
   }
 
-  /** Initializes the RCC Oscillators according to the specified parameters
-  * in the RCC_OscInitTypeDef structure.
-  */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
@@ -181,8 +213,6 @@ void SystemClock_Config(void)
     Error_Handler();
   }
 
-  /** Initializes the CPU, AHB and APB buses clocks
-  */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
@@ -195,6 +225,7 @@ void SystemClock_Config(void)
     Error_Handler();
   }
 }
+
 /**
   * @brief NVIC Configuration.
   * @retval None
@@ -204,6 +235,7 @@ static void MX_NVIC_Init(void)
   HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
 }
+
 /**
   * @brief USART2 Initialization Function
   * @param None
@@ -211,14 +243,6 @@ static void MX_NVIC_Init(void)
   */
 static void MX_USART2_UART_Init(void)
 {
-
-  /* USER CODE BEGIN USART2_Init 0 */
-
-  /* USER CODE END USART2_Init 0 */
-
-  /* USER CODE BEGIN USART2_Init 1 */
-
-  /* USER CODE END USART2_Init 1 */
   huart2.Instance = USART2;
   huart2.Init.BaudRate = 115200;
   huart2.Init.WordLength = UART_WORDLENGTH_8B;
@@ -233,10 +257,6 @@ static void MX_USART2_UART_Init(void)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN USART2_Init 2 */
-
-  /* USER CODE END USART2_Init 2 */
-
 }
 
 /**
@@ -292,37 +312,19 @@ static void MX_GPIO_Init(void)
   HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
 }
 
-/* USER CODE BEGIN 4 */
-
-/* USER CODE END 4 */
-
 /**
   * @brief  This function is executed in case of error occurrence.
   * @retval None
   */
 void Error_Handler(void)
 {
-  /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
   while (1)
   {
   }
-  /* USER CODE END Error_Handler_Debug */
 }
 #ifdef USE_FULL_ASSERT
-/**
-  * @brief  Reports the name of the source file and the source line number
-  *         where the assert_param error has occurred.
-  * @param  file: pointer to the source file name
-  * @param  line: assert_param error line source number
-  * @retval None
-  */
 void assert_failed(uint8_t *file, uint32_t line)
 {
-  /* USER CODE BEGIN 6 */
-  /* User can add his own implementation to report the file name and line number,
-     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
-  /* USER CODE END 6 */
 }
-#endif /* USE_FULL_ASSERT */
+#endif

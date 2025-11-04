@@ -42,8 +42,10 @@ void keypad_init(keypad_handle_t* keypad) {
 }
 
 // === NUEVO ===: Escaneo del teclado (identificación de tecla presionada)
+// === NUEVO ===: Escaneo del teclado (identificación de tecla presionada)
 char keypad_scan(keypad_handle_t* keypad, uint16_t col_pin) {
-    HAL_Delay(5); // Anti-rebote básico
+    // NO HAL_Delay(5) AQUÍ SI SE LLAMA DESDE UNA ISR O UN TIMER ISR
+    // El debouncing se gestionaría ANTES de llamar a esta función.
 
     char key_pressed = '\0';
 
@@ -58,28 +60,37 @@ char keypad_scan(keypad_handle_t* keypad, uint16_t col_pin) {
     if (col_index == -1)
         return '\0'; // Pin no válido
 
+    // --- Poner todas las filas en ALTO una vez antes de escanear ---
+    for (int k = 0; k < KEYPAD_ROWS; k++) {
+        HAL_GPIO_WritePin(keypad->row_ports[k], keypad->row_pins[k], GPIO_PIN_SET);
+    }
+
     // --- Escanear filas ---
     for (int r = 0; r < KEYPAD_ROWS; r++) {
-        // Poner todas las filas en ALTO antes de iniciar
-        for (int k = 0; k < KEYPAD_ROWS; k++) {
-            HAL_GPIO_WritePin(keypad->row_ports[k], keypad->row_pins[k], GPIO_PIN_SET);
-        }
-
         // Activar la fila actual en BAJO
         HAL_GPIO_WritePin(keypad->row_ports[r], keypad->row_pins[r], GPIO_PIN_RESET);
-        HAL_Delay(1);
+        // Pequeño retardo si es absolutamente necesario, pero idealmente se evita en contexto de ISR
+        // HAL_Delay(1); // Considera eliminar si se llama desde un timer ISR y el tiempo es crítico.
 
         // Si la columna sigue en bajo, esa es la tecla presionada
         if (HAL_GPIO_ReadPin(keypad->col_ports[col_index], keypad->col_pins[col_index]) == GPIO_PIN_RESET) {
             key_pressed = keypad_map[r][col_index];
-
-            // Esperar a que se suelte la tecla
-            while (HAL_GPIO_ReadPin(keypad->col_ports[col_index], keypad->col_pins[col_index]) == GPIO_PIN_RESET);
-            break;
+            // NO HAGAS EL BLOQUEO 'while' AQUÍ.
+            // La detección de la liberación de la tecla y el anti-rebote de la liberación
+            // se manejarían en el bucle principal o con otro timer/flag.
+            break; // Se encontró la tecla, salimos del bucle de filas
         }
+
+        // Restaurar la fila actual en ALTO antes de pasar a la siguiente
+        // Esto es crucial para un escaneo correcto
+        HAL_GPIO_WritePin(keypad->row_ports[r], keypad->row_pins[r], GPIO_PIN_SET);
     }
 
-    // Restaurar filas en ALTO
+    // Ya que el bucle `for (r...)` ha restaurado las filas una por una,
+    // este bucle final no es estrictamente necesario si el bucle interno lo hace bien.
+    // Pero es una buena medida de seguridad para garantizar que todas las filas queden en ALTO.
+    // Opcional: Podría ser eliminado si el bucle interno maneja la restauración de cada fila.
+    // Dejarlo aquí como precaución final.
     for (int i = 0; i < KEYPAD_ROWS; i++) {
         HAL_GPIO_WritePin(keypad->row_ports[i], keypad->row_pins[i], GPIO_PIN_SET);
     }
