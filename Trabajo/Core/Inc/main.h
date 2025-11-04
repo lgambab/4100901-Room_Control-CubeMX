@@ -28,6 +28,7 @@ extern "C" {
 
 /* Includes ------------------------------------------------------------------*/
 #include "stm32l4xx_hal.h"
+#include "ring_buffer.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -66,15 +67,30 @@ void Error_Handler(void);
 #define USART_RX_GPIO_Port GPIOA
 #define LD2_Pin GPIO_PIN_5
 #define LD2_GPIO_Port GPIOA
-#define LED_EXIT_Pin GPIO_PIN_7
-#define LED_EXIT_GPIO_Port GPIOA
+#define KEYPAD_C1_Pin GPIO_PIN_10
+#define KEYPAD_C1_GPIO_Port GPIOB
+#define KEYPAD_C1_EXTI_IRQn EXTI15_10_IRQn
+#define KEYPAD_C4_Pin GPIO_PIN_7
+#define KEYPAD_C4_GPIO_Port GPIOC
+#define KEYPAD_C4_EXTI_IRQn EXTI9_5_IRQn
+#define KEYPAD_C2_Pin GPIO_PIN_8
+#define KEYPAD_C2_GPIO_Port GPIOA
+#define KEYPAD_C2_EXTI_IRQn EXTI9_5_IRQn
+#define KEYPAD_C3_Pin GPIO_PIN_9
+#define KEYPAD_C3_GPIO_Port GPIOA
+#define KEYPAD_C3_EXTI_IRQn EXTI9_5_IRQn
+#define KEYPAD_R1_Pin GPIO_PIN_10
+#define KEYPAD_R1_GPIO_Port GPIOA
 #define TMS_Pin GPIO_PIN_13
 #define TMS_GPIO_Port GPIOA
 #define TCK_Pin GPIO_PIN_14
 #define TCK_GPIO_Port GPIOA
-#define SWO_Pin GPIO_PIN_3
-#define SWO_GPIO_Port GPIOB
-
+#define KEYPAD_R2_Pin GPIO_PIN_3
+#define KEYPAD_R2_GPIO_Port GPIOB
+#define KEYPAD_R4_Pin GPIO_PIN_4
+#define KEYPAD_R4_GPIO_Port GPIOB
+#define KEYPAD_R3_Pin GPIO_PIN_5
+#define KEYPAD_R3_GPIO_Port GPIOB
 /* USER CODE BEGIN Private defines */
 
 /* USER CODE END Private defines */
