@@ -140,7 +140,7 @@ int main(void)
   while (1)
   {
     uint8_t key_from_buffer;
-
+    char keypad_scan(keypad_handle_t* keypad, uint16_t col_pin);
     // Leer tecla desde buffer circular
     if (ring_buffer_read(&keypad_rb, &key_from_buffer))
     {
