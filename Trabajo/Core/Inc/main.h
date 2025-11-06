@@ -28,7 +28,6 @@ extern "C" {
 
 /* Includes ------------------------------------------------------------------*/
 #include "stm32l4xx_hal.h"
-#include "ring_buffer.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -91,6 +90,7 @@ void Error_Handler(void);
 #define KEYPAD_R4_GPIO_Port GPIOB
 #define KEYPAD_R3_Pin GPIO_PIN_5
 #define KEYPAD_R3_GPIO_Port GPIOB
+
 /* USER CODE BEGIN Private defines */
 
 /* USER CODE END Private defines */

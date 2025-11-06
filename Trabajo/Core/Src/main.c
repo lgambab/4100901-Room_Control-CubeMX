@@ -91,10 +91,17 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 // Callback de interrupción del teclado
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
-    char key = keypad_scan(&keypad, GPIO_Pin);
-    if (key != '\0') {
-        ring_buffer_write(&keypad_rb, (uint8_t)key);
-    }
+  // ISR: encola el evento de columna. No llamar a funciones bloqueantes aquí.
+  // El bucle principal realizará el escaneo (operación que puede ser lenta).
+  int col_index = -1;
+  for (int c = 0; c < KEYPAD_COLS; c++) {
+    if (keypad.col_pins[c] == GPIO_Pin) { col_index = c; break; }
+  }
+    if (col_index >= 0) {
+    // almacenar marcador de evento (0x80 | col_index)
+    uint8_t ev = 0x80 | (uint8_t)col_index;
+    ring_buffer_write(&keypad_rb, ev);
+  }
 }
 
 // Redirección de printf al UART
@@ -140,20 +147,40 @@ int main(void)
   while (1)
   {
     uint8_t key_from_buffer;
-    char keypad_scan(keypad_handle_t* keypad, uint16_t col_pin);
-    // Leer tecla desde buffer circular
-    if (ring_buffer_read(&keypad_rb, &key_from_buffer))
-    {
-        printf("Tecla presionada: %c\r\n", (char)key_from_buffer);
 
-        // Almacenar tecla
-        if (index < 4)
-        {
-            entered[index++] = (char)key_from_buffer;
-        }
+  // Leer evento desde buffer circular
+  // ISR: consume eventos del teclado encolados por la ISR
+  if (ring_buffer_read(&keypad_rb, &key_from_buffer))
+  {
+    char key_char = '\0';
+
+  // Si es un evento marcador -> realizar escaneo completo (seguro en contexto main)
+    if (key_from_buffer >= 0x80) {
+      int col = key_from_buffer & 0x7F;
+      if (col >= 0 && col < KEYPAD_COLS) {
+  // Diagnóstico: imprimir que recibimos un evento de columna
+        printf("Column event: %d\r\n", col);
+  // Llamar al escaneo bloqueante desde main (no desde ISR)
+        key_char = keypad_scan(&keypad, keypad.col_pins[col]);
+      }
+    } else {
+      key_char = (char)key_from_buffer;
+    }
+
+    if (key_char != '\0') {
+      // Mostramos la tecla por UART
+      printf("Tecla presionada: %c\r\n", key_char);
+
+      // Almacenar tecla
+      if (index < 4)
+      {
+        entered[index++] = key_char;
+      }
+    }
 
         // Cuando se ingresan 4 teclas, validar
-        if (index == 4)
+            // Si ya hay 4 teclas, validar la clave
+            if (index == 4)
         {
             entered[4] = '\0'; // Fin de cadena
 
@@ -232,8 +259,12 @@ void SystemClock_Config(void)
   */
 static void MX_NVIC_Init(void)
 {
+  // Interrupciones del teclado
   HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
 }
 
 /**
@@ -268,49 +299,67 @@ static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
 
+  /* --- Habilitar los clocks de los puertos --- */
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
-  HAL_GPIO_WritePin(GPIOA, LD2_Pin|KEYPAD_R1_Pin, GPIO_PIN_RESET);
-  HAL_GPIO_WritePin(GPIOB, KEYPAD_R2_Pin|KEYPAD_R4_Pin|KEYPAD_R3_Pin, GPIO_PIN_RESET);
+  /* --- Asegurar filas en HIGH (inactivas) antes de configurar --- */
+  HAL_GPIO_WritePin(GPIOA, KEYPAD_R1_Pin, GPIO_PIN_SET);     // PA10
+  HAL_GPIO_WritePin(GPIOB, KEYPAD_R2_Pin|KEYPAD_R3_Pin|KEYPAD_R4_Pin, GPIO_PIN_SET); // PB3, PB5, PB4
 
+  /* --- Configurar pines de salida (LED y filas del teclado) --- */
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+
+  /* LED onboard y fila R1 (PA10 compartido con R1) */
+  GPIO_InitStruct.Pin = LD2_Pin;
+  HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin = KEYPAD_R1_Pin;
+  HAL_GPIO_Init(KEYPAD_R1_GPIO_Port, &GPIO_InitStruct);
+
+  /* Filas R2, R3, R4 (GPIOB) */
+  GPIO_InitStruct.Pin = KEYPAD_R2_Pin | KEYPAD_R3_Pin | KEYPAD_R4_Pin;
+  HAL_GPIO_Init(KEYPAD_R2_GPIO_Port, &GPIO_InitStruct);
+
+  /* --- Configurar botón de usuario (opcional) --- */
   GPIO_InitStruct.Pin = B1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
-  GPIO_InitStruct.Pin = LD2_Pin|KEYPAD_R1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  GPIO_InitStruct.Pin = KEYPAD_C1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  /* --- Configurar columnas del teclado como entradas con interrupción FALLING --- */
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+
+  /* C1 -> PB10 */
+  GPIO_InitStruct.Pin = KEYPAD_C1_Pin;
   HAL_GPIO_Init(KEYPAD_C1_GPIO_Port, &GPIO_InitStruct);
 
+  /* C2 -> PA8 */
+  GPIO_InitStruct.Pin = KEYPAD_C2_Pin;
+  HAL_GPIO_Init(KEYPAD_C2_GPIO_Port, &GPIO_InitStruct);
+
+  /* C3 -> PA9 */
+  GPIO_InitStruct.Pin = KEYPAD_C3_Pin;
+  HAL_GPIO_Init(KEYPAD_C3_GPIO_Port, &GPIO_InitStruct);
+
+  /* C4 -> PC7 */
   GPIO_InitStruct.Pin = KEYPAD_C4_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(KEYPAD_C4_GPIO_Port, &GPIO_InitStruct);
 
-  GPIO_InitStruct.Pin = KEYPAD_C2_Pin|KEYPAD_C3_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  GPIO_InitStruct.Pin = KEYPAD_R2_Pin|KEYPAD_R4_Pin|KEYPAD_R3_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
+  /* --- NVIC para interrupciones externas --- */
   HAL_NVIC_SetPriority(EXTI9_5_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
+
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
 }
+
 
 /**
   * @brief  This function is executed in case of error occurrence.

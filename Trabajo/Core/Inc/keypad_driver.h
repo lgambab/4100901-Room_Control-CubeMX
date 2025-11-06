@@ -1,8 +1,8 @@
 #ifndef KEYPAD_DRIVER_H
 #define KEYPAD_DRIVER_H
 
-#include "main.h"
 #include <stdint.h>
+#include "main.h"
 
 #define KEYPAD_ROWS 4
 #define KEYPAD_COLS 4

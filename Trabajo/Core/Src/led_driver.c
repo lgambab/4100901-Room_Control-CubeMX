@@ -1,5 +1,5 @@
 #include "led_driver.h"
-
+// fucion que inicializa led 
 void led_init(led_handle_t *led) {
     HAL_GPIO_WritePin(led->port, led->pin, GPIO_PIN_RESET);
 }
