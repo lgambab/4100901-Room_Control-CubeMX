@@ -25,72 +25,92 @@
 #include <string.h>
 
 UART_HandleTypeDef huart2;
-
 /* USER CODE BEGIN PV */
-led_handle_t led1 = { .port = GPIOA, .pin = GPIO_PIN_5 }; // LED de la Nucleo
+// Estructura para manejar el LED
+led_handle_t led1 = { .port = GPIOA, .pin = GPIO_PIN_5 }; 
 
-#define RING_BUFFER_SIZE 16    ////aqui decalro un buffer circular de cabeza y cola
-uint8_t ring_buffer[RING_BUFFER_SIZE]; ////tamaño 16 para manejar datos de uart 
+// Define el tamaño del buffer circular
+#define RING_BUFFER_SIZE 16    
+// Buffer circular para datos generales
+uint8_t ring_buffer[RING_BUFFER_SIZE]; 
+// Estructura del buffer circular
 ring_buffer_t rb;
 
-#define KEYPAD_BUFFER_LEN 16                 ////Aqui declaro un buffer circular para el teclado 4x4
+// Define la longitud del buffer del teclado
+#define KEYPAD_BUFFER_LEN 16                
+// Buffer circular para las teclas presionadas
 uint8_t keypad_buffer[KEYPAD_BUFFER_LEN];
+// Estructura del buffer circular del teclado
 ring_buffer_t keypad_rb;
-                                ///Estructura que contiene todos los pines de filas y columnas del teclado.
-                               /// Sirve para identificar qué pines usar para escanearlo.
+                            
+// Estructura para manejar el teclado
 keypad_handle_t keypad = {
-    .row_ports = {KEYPAD_R1_GPIO_Port, KEYPAD_R2_GPIO_Port, KEYPAD_R3_GPIO_Port, KEYPAD_R4_GPIO_Port},
-    .row_pins  = {KEYPAD_R1_Pin, KEYPAD_R2_Pin, KEYPAD_R3_Pin, KEYPAD_R4_Pin},
-    .col_ports = {KEYPAD_C1_GPIO_Port, KEYPAD_C2_GPIO_Port, KEYPAD_C3_GPIO_Port, KEYPAD_C4_GPIO_Port},
-    .col_pins  = {KEYPAD_C1_Pin, KEYPAD_C2_Pin, KEYPAD_C3_Pin, KEYPAD_C4_Pin}
+    .row_ports = {KEYPAD_R1_GPIO_Port, KEYPAD_R2_GPIO_Port, KEYPAD_R3_GPIO_Port, KEYPAD_R4_GPIO_Port}, // Puertos GPIO de las filas
+    .row_pins  = {KEYPAD_R1_Pin, KEYPAD_R2_Pin, KEYPAD_R3_Pin, KEYPAD_R4_Pin}, // Pines GPIO de las filas
+    .col_ports = {KEYPAD_C1_GPIO_Port, KEYPAD_C2_GPIO_Port, KEYPAD_C3_GPIO_Port, KEYPAD_C4_GPIO_Port}, // Puertos GPIO de las columnas
+    .col_pins  = {KEYPAD_C1_Pin, KEYPAD_C2_Pin, KEYPAD_C3_Pin, KEYPAD_C4_Pin} // Pines GPIO de las columnas
 };
 
-uint32_t last_key_time = 0;        /// Variable para manejar el antirebote de las teclas del teclado
-                                /// Esta variable almacena el tiempo del último evento de tecla
-/* USER CODE END PV */
+// Tiempo de la última tecla presionada
+uint32_t last_key_time = 0;
 
-void SystemClock_Config(void);   /// Configuración del reloj del sistema
-void Error_Handler(void);        /// Manejo de errores
-static void MX_GPIO_Init(void); /// Inicialización de GPIO
-static void MX_USART2_UART_Init(void);  /// Inicialización del UART
+void SystemClock_Config(void);  
+void Error_Handler(void);       
+static void MX_GPIO_Init(void); 
+static void MX_USART2_UART_Init(void); 
 
 /* USER CODE BEGIN 0 */
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) { //// Callback para interrupciones de GPIO
-                                                 ////Esta función se llama automáticamente 
-                                                 // cuando se detecta un flanco de bajada
-                                                 //  en alguno de los pines configurados como 
-                                                 // entrada con interrupción (las columnas del teclado)
+/**
+ * @brief Esta función es un "callback" de interrupción y NO se ejecuta continuamente.
+ *        Funciona como un sistema de eventos.
+ * 
+ * 1. **Configuración:** En `MX_GPIO_Init()`, los pines de las columnas del teclado se configuran
+ *    en modo `GPIO_MODE_IT_FALLING`. Esto le dice al microcontrolador que genere una
+ *    interrupción de hardware (EXTI) cuando el voltaje en uno de esos pines caiga de ALTO a BAJO.
+ * 
+ * 2. **Disparo (Trigger):** Cuando se presiona una tecla, se conecta una fila (en estado BAJO) con
+ *    una columna (en estado ALTO por una resistencia de pull-up). Esto provoca la caída de voltaje
+ *    en el pin de la columna.
+ * 
+ * 3. **Respuesta del Hardware:** El hardware de interrupciones EXTI detecta este cambio y pausa
+ *    temporalmente el bucle `while(1)` del `main`.
+ * 
+ * 4. **Salto a la ISR:** El procesador salta a la rutina de servicio de interrupción correspondiente
+ *    (ej. `EXTI9_5_IRQHandler`), que a su vez llama a `HAL_GPIO_EXTI_IRQHandler()`. Finalmente,
+ *    la función de la HAL llama a este callback (`HAL_GPIO_EXTI_Callback`), pasándole el pin
+ *    que originó todo.
+ */
+// Callback para la interrupción EXTI (teclado matricial)
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) { 
+    // Evita rebotes
     uint32_t now = HAL_GetTick();
-    if (now - last_key_time < 200) return;  // Antirebote inteligente 
-                                      /// Si el tiempo desde el último evento es menor a 200 ms, se ignora el evento actual
-                                     /// Esto evita que se registren múltiples pulsaciones por un solo toque
+    if (now - last_key_time < 200) return;
     last_key_time = now;
 
-    char key = keypad_scan(&keypad, GPIO_Pin);   ///// Escaneo del teclado para detectar la tecla presionada
-    if (key != '\0') {             ///// Si se detecta una tecla válida, se escribe en el buffer circular
-        ring_buffer_write(&keypad_rb, (uint8_t)key); //// solo si es diferente a la última, evitando rebotes
+    char key = keypad_scan(&keypad, GPIO_Pin);   // Escanea el teclado para obtener la tecla presionada
+    if (key != '\0') {             // Si la tecla es válida
+        ring_buffer_write(&keypad_rb, (uint8_t)key); // Escribe la tecla en el buffer circular del teclado
     }
 }
 /* USER CODE END 0 */
 
 int main(void)
 {
-  HAL_Init();
-  SystemClock_Config();
-  MX_GPIO_Init();
-  MX_USART2_UART_Init();
-/// Inicialización de la HAL y configuración del reloj del sistema
-  HAL_NVIC_SetPriority(SysTick_IRQn, 0, 0);
-  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 2, 0);
-  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 2, 0);
-/// Inicialización de la UART y GPIO prioridades para interrupciones
-  /* USER CODE BEGIN 2 */
+  HAL_Init(); // Inicializa la HAL (Hardware Abstraction Layer) de STM32
+  SystemClock_Config(); // Configura el reloj del sistema
+  MX_GPIO_Init(); // Inicializa los pines GPIO
+  MX_USART2_UART_Init(); // Inicializa la UART2
+
+  HAL_NVIC_SetPriority(SysTick_IRQn, 0, 0); // Configura la prioridad de la interrupción del SysTick
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 2, 0); // Configura la prioridad de la interrupción EXTI9_5 (columnas del teclado)
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 2, 0); // Configura la prioridad de la interrupción EXTI15_10 (columnas del teclado)
+
+  // Inicializa el LED, los buffers circulares y el teclado
   led_init(&led1);
   ring_buffer_init(&rb, ring_buffer, RING_BUFFER_SIZE);
   ring_buffer_init(&keypad_rb, keypad_buffer, KEYPAD_BUFFER_LEN);
   keypad_init(&keypad);
-/// Inicialización del LED y los buffers circulares
-///configura pines de filas(como salidas) y columnas del teclado ( como entradas)
+
   printf("Sistema listo. Introduzca clave de 4 dígitos:\r\n");
 
   char clave_correcta[5] = "1234";
@@ -100,51 +120,53 @@ int main(void)
 
   while (1)
   {
+    // Lee una tecla del buffer circular del teclado
     uint8_t tecla;
-    if (ring_buffer_read(&keypad_rb, &tecla)) { //// Lectura de la tecla del buffer circular del teclado
-        printf("Tecla: %c\r\n", tecla); ///// Imprime la tecla leída en el buffer
+    if (ring_buffer_read(&keypad_rb, &tecla)) { 
+        printf("Tecla: %c\r\n", tecla); // Imprime la tecla presionada por la UART
 
-        if (idx < 4) {                     ////Va llenando una clave de 4 dígitos. 
-                                           // También parpadea el LED cada vez que se presiona una tecla.
+        if (idx < 4) {                     // Si aún no se han ingresado 4 dígitos
             clave_ingresada[idx++] = tecla;
             printf("idx = %d\r\n", idx);
 
-            led_on(&led1);
-            HAL_Delay(50);
-            led_off(&led1);
+            led_on(&led1);  // Enciende el LED para indicar que se ha ingresado un dígito
+            HAL_Delay(100);
+            led_off(&led1); // Apaga el LED después de un breve retardo
         }
-
-        if (idx == 4) { //// Cuando se ingresan 4 dígitos, se compara con la clave correcta                 
-            clave_ingresada[4] = '\0';  //// Asegura que la cadena esté terminada en nulo 
+        // Si se han ingresado 4 dígitos
+        if (idx == 4) {                
+            clave_ingresada[4] = '\0';  
             printf("Clave ingresada: %s\r\n", clave_ingresada);         
-
-            if (strcmp(clave_ingresada, clave_correcta) == 0) {   //// Compara la clave ingresada con la correcta
-                printf("✔ Acceso permitido\r\n");                  //// Si coinciden, se enciende el LED 5 veces
-                for (int i = 0; i < 5; i++) {
-                    led_on(&led1);
+            // Compara la clave ingresada con la clave correcta
+            if (strcmp(clave_ingresada, clave_correcta) == 0) {   
+                printf("✔ Acceso permitido\r\n");                 
+                for (int i = 0; i < 3; i++) {
+                    led_on(&led1);  // Enciende el LED varias veces para indicar acceso permitido
                     HAL_Delay(500);
-                    led_off(&led1);
+                    led_off(&led1); // Apaga el LED
                     HAL_Delay(500);
                 }
-            } else {  //// Si no coinciden, se enciende el LED 10 veces                       
+            } else {                       
                 printf("X Acceso denegado\r\n");     
-                for (int i = 0; i < 20; i++) {
-                    led_toggle(&led1);
-                    HAL_Delay(50);  //// Parpadea el LED rápidamente        
+                for (int i = 0; i < 5; i++) {
+                    led_toggle(&led1); // Hace parpadear el LED varias veces para indicar acceso denegado
+                    HAL_Delay(200);          
                 }
                 led_off(&led1);
             }
 
-            idx = 0;  //// Reinicia el índice para permitir una nueva entrada de clave
-            memset(clave_ingresada, 0, sizeof(clave_ingresada));    //// Limpia el buffer de la clave ingresada
+            printf("Sistema listo. Introduzca clave de 4 dígitos:\r\n"); // Pide al usuario que ingrese la clave nuevamente
+            // Reinicia el sistema para que el usuario pueda ingresar la clave de nuevo
+            idx = 0; // Reinicia el índice
+            memset(clave_ingresada, 0, sizeof(clave_ingresada));  // Limpia la clave ingresada
         }
     }
 
-    HAL_Delay(10);    //// Pequeña pausa para evitar saturar el bucle principal     
+    HAL_Delay(10);   
   }
 }
 
-void SystemClock_Config(void)       /// Configuración del reloj del sistema 
+void SystemClock_Config(void)      
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
@@ -204,6 +226,7 @@ PUTCHAR_PROTOTYPE
     HAL_UART_Transmit(&huart2, (uint8_t *)&ch, 1, HAL_MAX_DELAY);
     return ch;
 }
+// función para la inicializacion de los puertos GPIO
 
 static void MX_GPIO_Init(void)            /// Inicialización de los pines GPIO
 {
